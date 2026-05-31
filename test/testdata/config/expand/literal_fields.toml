@@ -1,0 +1,5 @@
+# name and group are identifiers and are NOT expanded, so $TEST_VAR stays literal
+[[tunnels]]
+name = "tun_$TEST_VAR"
+group = "grp_$TEST_VAR"
+host = "example.com"

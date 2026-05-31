@@ -1,0 +1,8 @@
+# Expanded against TEST_HOST, TEST_USER, TEST_IDENTITY, TEST_LOCAL, TEST_REMOTE
+[[tunnels]]
+name = "tun"
+host = "${TEST_HOST}"
+user = "$TEST_USER"
+identity = "${TEST_IDENTITY}"
+local = "${TEST_LOCAL}"
+remote = "${TEST_REMOTE}"

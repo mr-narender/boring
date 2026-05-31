@@ -1,0 +1,4 @@
+# TEST_NOPE is unset and has no default, so it should expand to an empty string
+[[tunnels]]
+name = "tun"
+host = "${TEST_NOPE}"
