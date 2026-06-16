@@ -60,6 +60,7 @@ func makeEnv(c config, t *testing.T) ([]string, error) {
 		"BORING_SSH_CONFIG="+c.sshConfig,
 		"BORING_COMMIT_OVERRIDE="+c.commitOverride,
 		"BORING_TAG_OVERRIDE="+c.tagOverride,
+		"HOME="+tmpDir,
 	)
 
 	if c.noSpawn {
