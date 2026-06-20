@@ -69,6 +69,18 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Expand environment variables for a pre-defined set of fields
+	expand := func(s string) string { return os.Expand(s, expandWithDefault) }
+	for i := range cfg.Tunnels {
+		t := &cfg.Tunnels[i]
+		t.Host = expand(t.Host)
+		t.User = expand(t.User)
+		t.IdentityFile = expand(t.IdentityFile)
+		t.Port = tunnel.StringOrInt(expand(t.Port.String()))
+		t.LocalAddress = tunnel.StringOrInt(expand(t.LocalAddress.String()))
+		t.RemoteAddress = tunnel.StringOrInt(expand(t.RemoteAddress.String()))
+	}
+
 	// Create a map of tunnel names to tunnel pointers for easy lookup later
 	m, err := buildTunnelsMap(cfg.Tunnels)
 	if err != nil {
@@ -126,4 +138,17 @@ func specialPrefix(s string) bool {
 
 func containsGlob(s string) bool {
 	return strings.ContainsAny(s, "*?[")
+}
+
+// expandWithDefault resolves an environment variable reference, supporting
+// the ${VAR:-default} syntax. If the variable is unset or empty and a default
+// is provided after ":-", the default value is returned.
+func expandWithDefault(key string) string {
+	if varName, defaultVal, found := strings.Cut(key, ":-"); found {
+		if val := os.Getenv(varName); val != "" {
+			return val
+		}
+		return defaultVal
+	}
+	return os.Getenv(key)
 }

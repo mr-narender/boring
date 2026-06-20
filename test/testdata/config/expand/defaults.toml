@@ -1,0 +1,12 @@
+# ${VAR:-fallback} syntax: TEST_SET is set, TEST_EMPTY is empty, TEST_UNSET is unset
+[[tunnels]]
+name = "set"
+host = "${TEST_SET:-fallback}"
+
+[[tunnels]]
+name = "empty"
+host = "${TEST_EMPTY:-fallback}"
+
+[[tunnels]]
+name = "unset"
+host = "${TEST_UNSET:-fallback}"
