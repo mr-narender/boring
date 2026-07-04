@@ -146,7 +146,7 @@ func controlTunnels(args []string, kind daemon.CmdKind) {
 }
 
 func openTunnel(t *tunnel.Desc) error {
-	resp, err := sendCmd(daemon.Cmd{Kind: daemon.Open, Tunnel: *t})
+	resp, err := sendCmd(daemon.Cmd{Kind: daemon.Open, Tunnel: t})
 	if err != nil {
 		log.Errorf("Could not transmit 'open' command: %v", err)
 		return errOpFailed
@@ -169,7 +169,7 @@ func openTunnel(t *tunnel.Desc) error {
 func closeTunnel(t *tunnel.Desc) error {
 	// Daemon only needs the name, so simplify
 	t = &tunnel.Desc{Name: t.Name}
-	resp, err := sendCmd(daemon.Cmd{Kind: daemon.Close, Tunnel: *t})
+	resp, err := sendCmd(daemon.Cmd{Kind: daemon.Close, Tunnel: t})
 	if err != nil {
 		log.Errorf("Could not transmit 'close' command: %v", err)
 		return errOpFailed

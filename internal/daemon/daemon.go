@@ -127,14 +127,20 @@ func (d *daemon) handleConn(conn net.Conn) {
 	}
 	log.Debugf("Received command %v", cmd)
 
+	if (cmd.Kind == Open || cmd.Kind == Close) && cmd.Tunnel == nil {
+		err := fmt.Errorf("no tunnel specified")
+		respond(conn, err, nil)
+		return
+	}
+
 	// Execute command
 	switch cmd.Kind {
 	case Nop:
 		respond(conn, nil, nil)
 	case Open:
-		d.openTunnel(conn, &cmd.Tunnel)
+		d.openTunnel(conn, cmd.Tunnel)
 	case Close:
-		d.closeTunnel(conn, &cmd.Tunnel)
+		d.closeTunnel(conn, cmd.Tunnel)
 	case List:
 		d.listTunnels(conn)
 	case Shutdown:

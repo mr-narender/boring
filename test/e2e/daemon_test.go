@@ -153,7 +153,7 @@ func TestDaemonInvalidTunnel(t *testing.T) {
 	log.Init(io.Discard, false, false)
 
 	tun := tunnel.Desc{Name: "notrunning"}
-	cmd := daemon.Cmd{Kind: daemon.Close, Tunnel: tun}
+	cmd := daemon.Cmd{Kind: daemon.Close, Tunnel: &tun}
 	conn, err := net.Dial("unix", getEnv(env, "BORING_SOCK"))
 	if err != nil {
 		t.Fatalf("could not connect to daemon")
@@ -170,6 +170,57 @@ func TestDaemonInvalidTunnel(t *testing.T) {
 
 	if r.Success || !strings.Contains(r.Error, "tunnel not running") {
 		t.Fatalf("did not get correct error message: %v", r.Error)
+	}
+}
+
+// Test that Open/Close commands without a tunnel payload are rejected
+// gracefully and do not crash the daemon
+func TestDaemonMissingTunnel(t *testing.T) {
+	env, cancel, err := makeDefaultEnvWithDaemon(t)
+	if err != nil {
+		t.Fatalf("%v", err.Error())
+	}
+	defer cancel()
+
+	log.Init(io.Discard, false, false)
+
+	sock := getEnv(env, "BORING_SOCK")
+	for _, kind := range []daemon.CmdKind{daemon.Open, daemon.Close} {
+		conn, err := net.Dial("unix", sock)
+		if err != nil {
+			t.Fatalf("could not connect to daemon")
+		}
+		defer conn.Close()
+
+		if err = ipc.Write(daemon.Cmd{Kind: kind}, conn); err != nil {
+			t.Fatalf("%v", err.Error())
+		}
+		var r daemon.Resp
+		if err = ipc.Read(&r, conn); err != nil {
+			t.Fatalf("%v", err.Error())
+		}
+
+		if r.Success || !strings.Contains(r.Error, "no tunnel specified") {
+			t.Fatalf("did not get correct error message: %v", r.Error)
+		}
+	}
+
+	// Daemon must still be responsive
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("daemon not reachable anymore: %v", err)
+	}
+	defer conn.Close()
+
+	if err = ipc.Write(daemon.Cmd{Kind: daemon.Nop}, conn); err != nil {
+		t.Fatalf("%v", err.Error())
+	}
+	var r daemon.Resp
+	if err = ipc.Read(&r, conn); err != nil {
+		t.Fatalf("daemon did not respond anymore: %v", err.Error())
+	}
+	if !r.Success {
+		t.Fatalf("expected success, got: %v", r.Error)
 	}
 }
 

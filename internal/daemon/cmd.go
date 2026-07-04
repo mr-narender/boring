@@ -34,6 +34,6 @@ func (k CmdKind) String() string {
 
 // Cmd represents a command sent to the daemon
 type Cmd struct {
-	Kind   CmdKind     `json:"kind"`
-	Tunnel tunnel.Desc `json:"tunnel,omitempty"`
+	Kind   CmdKind      `json:"kind"`
+	Tunnel *tunnel.Desc `json:"tunnel,omitempty"`
 }
