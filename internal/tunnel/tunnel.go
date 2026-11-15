@@ -117,21 +117,22 @@ func (t *Tunnel) setStatus(s Status) {
 }
 
 func (t *Tunnel) prepare() error {
-	// We need to pass the user as it's needed for matching Match blocks
-	sc, err := ssh_config.ParseSSHConfig(t.Host, t.User)
+	var port int
+	if t.Port != "" {
+		var err error
+		if port, err = strconv.Atoi(t.Port.String()); err != nil || port < 1 {
+			return fmt.Errorf("invalid port %q", t.Port)
+		}
+	}
+
+	// User and port override the config, and the user is also needed for
+	// matching Match blocks
+	sc, err := ssh_config.ParseSSHConfig(t.Host, t.User, port)
 	if err != nil {
 		return fmt.Errorf("could not parse SSH config: %v", err)
 	}
 
 	// Override values manually set by user
-	if t.User != "" {
-		sc.User = t.User
-	}
-	if t.Port != "" {
-		if sc.Port, err = strconv.Atoi(t.Port.String()); err != nil {
-			return fmt.Errorf("invalid port %q", t.Port)
-		}
-	}
 	if t.IdentityFile != "" {
 		sc.IdentityFiles = []string{t.IdentityFile}
 	}
@@ -140,8 +141,6 @@ func (t *Tunnel) prepare() error {
 	if sc.HostName == "" {
 		sc.HostName = t.Host
 	}
-
-	sc.EnsureUser()
 
 	// Infer series of hops from ssh config
 	if t.hops, err = sc.ToHops(); err != nil {
@@ -354,6 +353,7 @@ func (t *Tunnel) handleForward(l net.Listener, f forward) {
 			conn2, err := t.dial(addr.net, addr.addr)
 			if err != nil {
 				log.Errorf("%v: could not dial: %v", t.Name, err)
+				conn1.Close()
 				return
 			}
 			tunnel(conn1, conn2)

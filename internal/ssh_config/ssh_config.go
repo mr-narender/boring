@@ -12,7 +12,7 @@ import (
 	"github.com/alebeck/boring/internal/agent"
 	"github.com/alebeck/boring/internal/log"
 	"github.com/alebeck/boring/internal/paths"
-	ossh_config "github.com/alebeck/ssh_config"
+	"github.com/alebeck/boring/internal/ssh_config/parser"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -50,6 +50,7 @@ type SSHConfig struct {
 	HostName         string
 	Port             int
 	KeyCheck         keyCheck
+	IdentityAgent    string
 	IdentitiesOnly   bool
 	IdentityFiles    []string
 	CertificateFiles []string
@@ -63,29 +64,24 @@ type SSHConfig struct {
 
 var (
 	hostnameTokens  = []string{"%%", "%h"}
-	proxyTokens     = []string{"%%", "h", "%n", "%p", "%r"}
+	proxyTokens     = []string{"%%", "%h", "%n", "%p", "%r"}
 	identFileTokens = []string{
 		"%%", "%d", "%h", "%i", "%j", "%k",
 		"%L", "%l", "%n", "%p", "%r", "%u",
 	}
 )
 
-func ParseSSHConfig(alias, user string) (*SSHConfig, error) {
-	// We create a new ssh_config.UserSettings object at each connection so that
-	// config file changes are reflected immediately.
-	us := ossh_config.MakeDefaultUserSettings()
-	if overrideConfig != "" {
-		us.ConfigFinder(func() string { return overrideConfig })
-	}
-
-	// This is a "strict" dummy query to catch potential parsing errors early
-	if _, err := us.GetStrict(alias, "HostName", ""); err != nil {
+func ParseSSHConfig(alias, user string, port int) (*SSHConfig, error) {
+	// We load the config files at each connection so that config file changes
+	// are reflected immediately.
+	settings, err := parser.Load(overrideConfig)
+	if err != nil {
 		return nil, err
 	}
 
 	// In the following, we always provide `user` since it is needed for `Match` matching
-	get := func(key string) string { return us.Get(alias, key, user) }
-	getAll := func(key string) []string { return us.GetAll(alias, key, user) }
+	get := func(key string) string { return settings.Get(alias, key, user) }
+	getAll := func(key string) []string { return settings.GetAll(alias, key, user) }
 
 	c := &SSHConfig{Alias: alias}
 	sub := makeSubst(alias)
@@ -94,9 +90,17 @@ func ParseSSHConfig(alias, user string) (*SSHConfig, error) {
 		sub["%h"] = c.HostName
 	}
 
+	// Like ssh(1), a given user and port take precedence over the config
 	c.User = get("User")
+	if user != "" {
+		c.User = user
+	}
+	c.ensureUser()
 	sub["%r"] = c.User
 	c.Port, _ = strconv.Atoi(get("Port"))
+	if port != 0 {
+		c.Port = port
+	}
 	sub["%p"] = fmt.Sprintf("%d", c.Port)
 
 	s := get("StrictHostKeyChecking")
@@ -129,17 +133,54 @@ func ParseSSHConfig(alias, user string) (*SSHConfig, error) {
 	}
 
 	c.IdentitiesOnly = get("IdentitiesOnly") == "yes"
-	c.IdentityFiles = sub.applyAll(getAll("IdentityFile"), identFileTokens)
-	c.CertificateFiles = getAll("CertificateFile")
-
-	// Known hosts
-	hosts := getAll("GlobalKnownHostsFile")
-	hosts = append(hosts, sub.applyAll(getAll("UserKnownHostsFile"), identFileTokens)...)
-	for _, h := range hosts {
-		c.KnownHostsFiles = append(c.KnownHostsFiles, strings.Split(h, " ")...)
+	if err := c.setPaths(getAll, sub); err != nil {
+		return nil, err
 	}
 
 	return c, nil
+}
+
+// setPaths sets the identity, certificate, agent and known hosts paths. Like
+// ssh(1), tokens and ${VAR} environment variables are expanded.
+func (c *SSHConfig) setPaths(getAll func(string) []string, sub subst) error {
+	getPaths := func(key string) ([]string, error) {
+		vals := sub.applyAll(getAll(key), identFileTokens)
+		for i := range vals {
+			v, err := paths.ExpandEnv(vals[i])
+			if err != nil {
+				return nil, fmt.Errorf("%s: %v", key, err)
+			}
+			vals[i] = v
+		}
+		return vals, nil
+	}
+
+	var err error
+	if c.IdentityFiles, err = getPaths("IdentityFile"); err != nil {
+		return err
+	}
+	if c.CertificateFiles, err = getPaths("CertificateFile"); err != nil {
+		return err
+	}
+	agents, err := getPaths("IdentityAgent")
+	if err != nil {
+		return err
+	}
+	if len(agents) > 0 {
+		c.IdentityAgent = agents[0]
+	}
+
+	// Known hosts
+	userHosts, err := getPaths("UserKnownHostsFile")
+	if err != nil {
+		return err
+	}
+	hosts := getAll("GlobalKnownHostsFile")
+	hosts = append(hosts, userHosts...)
+	for _, h := range hosts {
+		c.KnownHostsFiles = append(c.KnownHostsFiles, strings.Split(h, " ")...)
+	}
+	return nil
 }
 
 // ToHops creates an ordered series of Hops from an SSHConfig
@@ -162,25 +203,15 @@ func (sc *SSHConfig) toHopsImpl(ignoreIntermediate bool, depth int) ([]Hop, erro
 
 	var hops []Hop
 	for i, j := range sc.Jumps {
-		jc, err := ParseSSHConfig(j.host, j.user)
+		jc, err := ParseSSHConfig(j.host, j.user, j.port)
 		if err != nil {
 			return nil, fmt.Errorf("could not parse SSH config for %v: %v", j.host, err)
-		}
-
-		// Replace jump user & port if provided inline
-		if j.user != "" {
-			jc.User = j.user
-		}
-		if j.port != 0 {
-			jc.Port = j.port
 		}
 
 		// If hostname could not be resolved from ssh config, take it literally
 		if jc.HostName == "" {
 			jc.HostName = j.host
 		}
-
-		jc.EnsureUser()
 
 		// Recursively connect to first jump host, ignore jumps for subsequent connections;
 		// this corresponds to ssh(1) behavior
@@ -255,7 +286,11 @@ func (sc *SSHConfig) loadIDs() (fileIDs, agentCertIDs, agentCfgIDs, agentOtherID
 		}
 	}
 
-	if agSigs, err := agent.GetSigners(); err != nil {
+	if sc.IdentityAgent == "none" {
+		return
+	}
+
+	if agSigs, err := agent.GetSigners(agentSock(sc.IdentityAgent)); err != nil {
 		log.Warningf("Unable to get keys from ssh-agent: %v", err)
 	} else {
 		for _, s := range agSigs {
@@ -401,7 +436,7 @@ func (sc *SSHConfig) validate() error {
 	return nil
 }
 
-func (sc *SSHConfig) EnsureUser() {
+func (sc *SSHConfig) ensureUser() {
 	// Like ssh(1), use $USER if no user specified
 	if sc.User == "" {
 		if u, err := user.Current(); err == nil {
@@ -434,6 +469,17 @@ func loadIdentity(f string) (signer ssh.Signer, fp string, ok bool) {
 		return nil, keyFP(pub), true
 	}
 	return nil, "", false
+}
+
+func agentSock(v string) string {
+	if v == "" || v == "SSH_AUTH_SOCK" {
+		return os.Getenv("SSH_AUTH_SOCK")
+	}
+	// Like ssh(1), a value of $VAR names the variable holding the socket
+	if name, ok := strings.CutPrefix(v, "$"); ok {
+		return os.Getenv(name)
+	}
+	return paths.ReplaceTilde(v)
 }
 
 func loadPrivateKey(path string) (ssh.Signer, error) {
