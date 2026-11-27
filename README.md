@@ -8,7 +8,6 @@ A simple command line SSH tunnel manager that just works.
 
 [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/alebeck/boring/test_and_cover.yml?branch=main&style=flat&logo=github&label=CI)](https://github.com/alebeck/boring/actions/workflows/test_and_cover.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/alebeck/boring?color=orange)](https://github.com/alebeck/boring/releases/latest)
-[![Go Report Card](https://goreportcard.com/badge/github.com/alebeck/boring)](https://goreportcard.com/report/github.com/alebeck/boring)
 [![Coverage Status](https://coveralls.io/repos/github/alebeck/boring/badge.svg?branch=main)](https://coveralls.io/github/alebeck/boring?branch=main)
 ![Static Badge](https://img.shields.io/badge/license-MIT-blue?)
 
@@ -74,7 +73,7 @@ Currently, supported options at tunnel level are:
 | **Option**    | **Description**                                                                                                                                                                    |
 |---------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `name`        | Alias for the tunnel. **Required.**                                                                                                                                                |
-| `local`       | Local address. Can be a `"$host:$port"` network address or a Unix socket. Can be abbreviated as `"$port"` in local and socks modes. **Required** in local, remote and socks modes. |
+| `local`       | Local address. Can be a `"$host:$port"` network address or a Unix socket. Can be abbreviated as `"$port"` in local and socks modes. The port can be a list of ports and ranges, e.g. `"8000-8010,8080"`, paired by position with those in `remote`. **Required** in local, remote and socks modes. |
 | `remote`      | Remote address. As above, but can be abbreviated in remote and socks-remote modes. **Required** in local, remote and socks-remote modes.                                           |
 | `host`        | Either a host alias that matches SSH configs or the actual hostname. **Required.**                                                                                                 |
 | `mode`        | Mode of the tunnel. Can be either `"local"`, `"remote"`, `"socks"` or `"socks-remote"`. Default is `"local"`.                                                                      |
