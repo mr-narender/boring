@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"os"
+	"os/user"
 	"path/filepath"
 	"testing"
 
@@ -137,11 +138,80 @@ func TestParseSSHConfigDefaultPort(t *testing.T) {
 	overrideConfig = cfg
 	t.Cleanup(func() { overrideConfig = old })
 
-	sc, err := ParseSSHConfig("myhost", "bob")
+	sc, err := ParseSSHConfig("myhost", "bob", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sc.Port != 22 {
 		t.Errorf("Port = %d, want 22", sc.Port)
+	}
+}
+
+// Tokens and environment variables in values must be expanded like ssh(1) does
+func TestParseSSHConfigTokens(t *testing.T) {
+	local, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_DIR", "/env")
+	tests := []struct {
+		config, user string
+		port         int
+		got          func(*SSHConfig) string
+		want         string
+	}{
+		{"HostName example.com\nProxyJump %h\n", "", 0, func(sc *SSHConfig) string { return sc.Jumps[0].host }, "example.com"},
+		{"User bob\nCertificateFile %r-cert.pub\n", "", 0, func(sc *SSHConfig) string { return sc.CertificateFiles[0] }, "bob-cert.pub"},
+		{"IdentityFile %%h\n", "", 0, func(sc *SSHConfig) string { return sc.IdentityFiles[0] }, "%h"},
+		{"User bob\nIdentityFile %r\n", "alice", 0, func(sc *SSHConfig) string { return sc.IdentityFiles[0] }, "alice"},
+		{"IdentityFile %r\n", "", 0, func(sc *SSHConfig) string { return sc.IdentityFiles[0] }, local.Username},
+		{"Port 2222\nIdentityFile %p\n", "", 3333, func(sc *SSHConfig) string { return sc.IdentityFiles[0] }, "3333"},
+		{"IdentityFile ${TEST_DIR}/%r\n", "bob", 0, func(sc *SSHConfig) string { return sc.IdentityFiles[0] }, "/env/bob"},
+		{"CertificateFile ${TEST_DIR}/cert\n", "", 0, func(sc *SSHConfig) string { return sc.CertificateFiles[0] }, "/env/cert"},
+		{"IdentityAgent ${TEST_DIR}/agent.sock\n", "", 0, func(sc *SSHConfig) string { return sc.IdentityAgent }, "/env/agent.sock"},
+		{"UserKnownHostsFile ${TEST_DIR}/known_hosts\n", "", 0, func(sc *SSHConfig) string { return sc.KnownHostsFiles[len(sc.KnownHostsFiles)-1] }, "/env/known_hosts"},
+	}
+
+	old := overrideConfig
+	t.Cleanup(func() { overrideConfig = old })
+	parse := func(config, user string, port int) (*SSHConfig, error) {
+		overrideConfig = filepath.Join(t.TempDir(), "config")
+		if err := os.WriteFile(overrideConfig, []byte(config), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return ParseSSHConfig("alias", user, port)
+	}
+	for _, tt := range tests {
+		sc, err := parse(tt.config, tt.user, tt.port)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := tt.got(sc); got != tt.want {
+			t.Errorf("%q: got %q, want %q", tt.config, got, tt.want)
+		}
+	}
+
+	// Like ssh(1), unset environment variables are an error
+	if _, err := parse("IdentityFile ${TEST_UNSET}/id\n", "", 0); err == nil {
+		t.Error("expected error for unset environment variable")
+	}
+}
+
+func TestAgentSock(t *testing.T) {
+	t.Setenv("HOME", "/home/u")
+	t.Setenv("USERPROFILE", "/home/u") // home directory on Windows
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/default.sock")
+	t.Setenv("MY_SOCK", "/tmp/my.sock")
+
+	for in, want := range map[string]string{
+		"":                    "/tmp/default.sock",
+		"SSH_AUTH_SOCK":       "/tmp/default.sock",
+		"$MY_SOCK":            "/tmp/my.sock",
+		"~/agent.sock":        filepath.Join("/home/u", "agent.sock"),
+		"/path/to/agent.sock": "/path/to/agent.sock",
+	} {
+		if got := agentSock(in); got != want {
+			t.Errorf("agentSock(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

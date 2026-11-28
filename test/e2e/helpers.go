@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -20,6 +19,10 @@ const (
 	binary      = "../../boring.test"
 	cliTimeout  = 10 * time.Second
 	connTimeout = 5 * time.Second
+	// Generous on purpose: the first run of a freshly linked binary on
+	// macOS, or a binary built with -race, can take well over 500ms to
+	// start up.
+	daemonStartTimeout = 5 * time.Second
 )
 
 var testMsg = []byte("hello through tunnel")
@@ -48,8 +51,13 @@ func makeEnv(c config, t *testing.T) ([]string, error) {
 	tmpDir := t.TempDir()
 	logFile := filepath.Join(tmpDir, "boringd.log")
 	sockFile := filepath.Join(tmpDir, "boringd.sock")
-	// fmt.Printf("daemon logs at: %s\n", logFile)
-	// fmt.Printf("daemon socket at: %s\n", sockFile)
+
+	t.Cleanup(func() {
+		if t.Failed() {
+			log, _ := os.ReadFile(logFile)
+			t.Logf("daemon log:\n%s", log)
+		}
+	})
 
 	env := append(
 		os.Environ(),
@@ -61,6 +69,7 @@ func makeEnv(c config, t *testing.T) ([]string, error) {
 		"BORING_COMMIT_OVERRIDE="+c.commitOverride,
 		"BORING_TAG_OVERRIDE="+c.tagOverride,
 		"HOME="+tmpDir,
+		"USERPROFILE="+tmpDir, // home directory on Windows
 	)
 
 	if c.noSpawn {
@@ -111,25 +120,33 @@ func daemonWithCancel(env []string) (context.CancelFunc, error) {
 		return nil, err
 	}
 
-	// Prevent zombie processes
+	// Prevent zombie processes. Wait must only be called once, so
+	// cancel waits on the channel instead of calling it again.
+	exited := make(chan struct{})
 	go func() {
 		cmd.Wait()
+		close(exited)
 	}()
 
+	sock := getEnv(env, "BORING_SOCK")
 	cancel := func() {
-		cmd.Process.Signal(syscall.SIGTERM)
-		cmd.Wait()
+		// Kill the daemon if it cannot be stopped, e.g. as it never came up
+		if stopDaemon(cmd.Process, sock) != nil {
+			cmd.Process.Kill()
+		}
+		<-exited
 	}
 
 	// Wait for daemon to start
 	wait := time.NewTimer(0.)
 	waitTime := 2 * time.Millisecond
-	timeout := time.After(500 * time.Millisecond)
-	sock := getEnv(env, "BORING_SOCK")
+	timeout := time.After(daemonStartTimeout)
 
 	for {
 		select {
 		case <-timeout:
+			// Don't leave the process behind when giving up on it
+			cancel()
 			return nil, fmt.Errorf("daemon not responsive after timeout")
 		case <-wait.C:
 			if conn, err := net.Dial("unix", sock); err == nil {
